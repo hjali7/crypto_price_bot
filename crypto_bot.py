@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import os
 from top_coins import get_top_coins_panel
 from coin_info import get_coin_info
+from coin_price import get_coin_price
 
 # تنظیم لاگینگ با جزئیات بیشتر
 logging.basicConfig(
@@ -28,7 +29,8 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 COINGECKO_API = "https://api.coingecko.com/api/v3"
 
 # حالت‌های ConversationHandler
-COIN_SYMBOL = 0
+COIN_SYMBOL_INFO = 0
+COIN_SYMBOL_PRICE = 1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ارسال پیام خوش‌آمدگویی با پنل شیشه‌ای"""
@@ -71,20 +73,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 async def start_coin_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """شروع مکالمه برای دریافت نماد ارز"""
+    """شروع مکالمه برای دریافت نماد ارز (اطلاعات)"""
     query = update.callback_query
     await query.answer()
     await query.message.reply_text(
         "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin):",
         reply_to_message_id=query.message.message_id
     )
-    return COIN_SYMBOL
+    return COIN_SYMBOL_INFO
 
-async def receive_coin_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start_coin_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """شروع مکالمه برای دریافت نماد ارز (قیمت)"""
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin):",
+        reply_to_message_id=query.message.message_id
+    )
+    return COIN_SYMBOL_PRICE
+
+async def receive_coin_symbol_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """دریافت نماد ارز و نمایش اطلاعات"""
     symbol = update.message.text.strip()
-    logger.debug(f"نماد دریافت‌شده در مکالمه: {symbol} از کاربر {update.effective_user.id}")
+    logger.debug(f"نماد دریافت‌شده برای اطلاعات: {symbol} از کاربر {update.effective_user.id}")
     await get_coin_info(update, context, symbol)
+    # پایان مکالمه
+    return ConversationHandler.END
+
+async def receive_coin_symbol_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دریافت نماد ارز و نمایش قیمت"""
+    symbol = update.message.text.strip()
+    logger.debug(f"نماد دریافت‌شده برای قیمت: {symbol} از کاربر {update.effective_user.id}")
+    await get_coin_price(update, context, symbol)
     # پایان مکالمه
     return ConversationHandler.END
 
@@ -103,10 +123,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     logger.debug(f"کلیک روی دکمه: {query.data} توسط کاربر {query.from_user.id}")
 
     if query.data == "price":
-        await query.message.reply_text(
-            "لطفاً نماد ارز را وارد کنید. مثال: /price btc",
-            reply_to_message_id=query.message.message_id
-        )
+        return await start_coin_price(update, context)
     elif query.data == "info":
         return await start_coin_info(update, context)
     elif query.data == "chart":
@@ -129,7 +146,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await get_coin_info(query, context, coin_id)
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """نمایش قیمت لحظه‌ای یک ارز"""
+    """نمایش قیمت لحظه‌ای یک ارز (برای دستور مستقیم /price)"""
     logger.debug(f"اجرای دستور /price توسط کاربر {update.effective_user.id}")
     if not context.args:
         await update.message.reply_text(
@@ -138,29 +155,10 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     symbol = context.args[0].lower()
-    try:
-        response = requests.get(f"{COINGECKO_API}/simple/price?ids={symbol}&vs_currencies=usd")
-        response.raise_for_status()
-        data = response.json()
-
-        if symbol not in data:
-            await update.message.reply_text(
-                "ارز یافت نشد! نماد را بررسی کنید."
-            )
-            return
-
-        price = data[symbol]["usd"]
-        await update.message.reply_text(
-            f"قیمت {symbol.upper()}: ${price:,.2f}"
-        )
-    except Exception as e:
-        logger.error(f"خطا در دریافت قیمت: {e}")
-        await update.message.reply_text(
-            "خطایی رخ داد. دوباره امتحان کنید."
-        )
+    await get_coin_price(update, context, symbol)
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """نمایش اطلاعات ارز با استفاده از ماژول"""
+    """نمایش اطلاعات ارز با استفاده از ماژول (برای دستور مستقیم /info)"""
     logger.debug(f"اجرای دستور /info توسط کاربر {update.effective_user.id}")
     symbol = context.args[0] if context.args else ""
     await get_coin_info(update, context, symbol)
@@ -241,10 +239,19 @@ def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
     # تعریف ConversationHandler برای اطلاعات ارز
-    conv_handler = ConversationHandler(
+    info_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_coin_info, pattern="^info$")],
         states={
-            COIN_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_coin_symbol)],
+            COIN_SYMBOL_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_coin_symbol_info)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # تعریف ConversationHandler برای قیمت ارز
+    price_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_coin_price, pattern="^price$")],
+        states={
+            COIN_SYMBOL_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_coin_symbol_price)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -256,7 +263,8 @@ def main() -> None:
     application.add_handler(CommandHandler("info", info))
     application.add_handler(CommandHandler("chart", chart))
     application.add_handler(CommandHandler("top", top))
-    application.add_handler(conv_handler)
+    application.add_handler(info_handler)
+    application.add_handler(price_handler)
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
