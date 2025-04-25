@@ -12,6 +12,7 @@ import os
 from top_coins import get_top_coins_panel
 from coin_info import get_coin_info
 from coin_price import get_coin_price
+from coin_suggestions import get_suggestions_panel
 
 # تنظیم لاگینگ با جزئیات بیشتر
 logging.basicConfig(
@@ -76,8 +77,10 @@ async def start_coin_info(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """شروع مکالمه برای دریافت نماد ارز (اطلاعات)"""
     query = update.callback_query
     await query.answer()
+    reply_markup = get_suggestions_panel("info")
     await query.message.reply_text(
-        "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin):",
+        "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin) یا یکی از نمادهای زیر را انتخاب کنید:",
+        reply_markup=reply_markup,
         reply_to_message_id=query.message.message_id
     )
     return COIN_SYMBOL_INFO
@@ -86,8 +89,10 @@ async def start_coin_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """شروع مکالمه برای دریافت نماد ارز (قیمت)"""
     query = update.callback_query
     await query.answer()
+    reply_markup = get_suggestions_panel("price")
     await query.message.reply_text(
-        "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin):",
+        "لطفاً نماد ارز را وارد کنید (مثال: btc، eth، bitcoin) یا یکی از نمادهای زیر را انتخاب کنید:",
+        reply_markup=reply_markup,
         reply_to_message_id=query.message.message_id
     )
     return COIN_SYMBOL_PRICE
@@ -140,6 +145,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     elif query.data == "restart":
         await start(query, context)
+    elif query.data.startswith("price_") or query.data.startswith("info_"):
+        # مدیریت کلیک روی نمادهای پیشنهادی
+        mode, coin = query.data.split("_", 1)
+        if mode == "price":
+            await get_coin_price(query, context, coin)
+        elif mode == "info":
+            await get_coin_info(query, context, coin)
     elif query.data.startswith("coin_"):
         # مدیریت کلیک روی دکمه‌های 10 ارز برتر
         coin_id = query.data.split("_")[1]
